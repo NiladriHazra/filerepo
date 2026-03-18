@@ -27,7 +27,10 @@ func (m *model) View() string {
 		body += "\n\n" + m.renderToast()
 	}
 
-	return appStyle.Render(body)
+	return appStyle.
+		Width(m.width).
+		Height(m.height).
+		Render(body)
 }
 
 func (m *model) renderInput() string {
@@ -41,21 +44,35 @@ func (m *model) renderInput() string {
 		inputValue = inputValue[:m.urlCursor] + "_" + inputValue[m.urlCursor+1:]
 	}
 
+	contentWidth := boundedContentWidth(m.width, inputPanelMinWidth, inputPanelMaxWidth, inputPanelGutter)
+
+	footer := joinShortcuts(
+		shortcutLabel("Enter", "start"),
+		shortcutLabel("Tab", "auto-fill"),
+		shortcutLabel("Esc", "quit"),
+	)
+
 	sections := []string{
-		renderLogo(),
-		mutedTextStyle.Render("Grab any file or folder from GitHub. No clones. Just what you need."),
-		accentPanelStyle.Render("GitHub URL\n" + inputValue),
-		panelStyle.Render(strings.Join([]string{
-			successText.Render("Examples"),
-			"  https://github.com/torvalds/linux",
-			"  https://github.com/rust-lang/rust/tree/master/src/tools",
-			"  https://github.com/user/repo/tree/main/some-folder",
+		centerBlock(contentWidth, renderLogo()),
+		centerBlock(contentWidth, mutedTextStyle.Render("Grab any file or folder from GitHub. No clones. Just what you need.")),
+		titledPanelWithColor(
+			accentTextStyle.Render(" GitHub URL "),
+			inputValue,
+			contentWidth,
+			colorAccent,
+		),
+		titledPanelWithColor(successText.Render(" Examples "), strings.Join([]string{
+			"    https://github.com/torvalds/linux",
+			"    https://github.com/rust-lang/rust/tree/master/src/tools",
+			"    https://github.com/user/repo/tree/main/some-folder",
 			"",
-			mutedTextStyle.Render("Enter start  |  Tab auto-fill  |  Esc quit"),
-		}, "\n")),
+			mutedTextStyle.Render("Tip: Private repo? use --token <TOKEN>"),
+			mutedTextStyle.Render("     or save one with: filerepo config set token YOUR_TOKEN"),
+		}, "\n"), contentWidth, colorBorder),
+		centerBlock(contentWidth, footer),
 	}
 
-	return strings.Join(sections, "\n\n")
+	return centerInputLayout(m.width, m.height, fillBlockBackground(strings.Join(sections, "\n\n")))
 }
 
 func renderLogo() string {
@@ -69,7 +86,7 @@ func renderLogo() string {
 	}
 
 	for index := range lines {
-		lines[index] = accentTextStyle.Render(lines[index])
+		lines[index] = accentTextStyle.Render(strings.TrimRight(lines[index], " "))
 	}
 
 	return strings.Join(lines, "\n")
@@ -88,5 +105,5 @@ func (m *model) renderToast() string {
 		style = accentTextStyle
 	}
 
-	return panelStyle.Width(max(44, min(m.width-6, 96))).Render(style.Render(m.toast.message))
+	return panelWithColor(style.Render(m.toast.message), max(44, min(m.width-6, 96)), colorBorder)
 }

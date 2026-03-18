@@ -17,7 +17,8 @@ var (
 )
 
 var (
-	appStyle = lipgloss.NewStyle().
+	baseTextStyle = lipgloss.NewStyle().Background(colorBG)
+	appStyle      = lipgloss.NewStyle().
 			Background(colorBG).
 			Foreground(colorFG).
 			Padding(1, 2)
@@ -31,12 +32,12 @@ var (
 				BorderForeground(colorAccent).
 				Padding(0, 1).
 				Background(colorBG)
-	headerTextStyle = lipgloss.NewStyle().Foreground(colorFG).Bold(true)
-	accentTextStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	mutedTextStyle  = lipgloss.NewStyle().Foreground(colorSubtext)
-	successText     = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true)
-	warningText     = lipgloss.NewStyle().Foreground(colorWarning).Bold(true)
-	errorText       = lipgloss.NewStyle().Foreground(colorError).Bold(true)
-	folderText      = lipgloss.NewStyle().Foreground(colorFolder).Bold(true)
+	headerTextStyle = baseTextStyle.Copy().Foreground(colorFG).Bold(true)
+	accentTextStyle = baseTextStyle.Copy().Foreground(colorAccent).Bold(true)
+	mutedTextStyle  = baseTextStyle.Copy().Foreground(colorSubtext)
+	successText     = baseTextStyle.Copy().Foreground(colorSuccess).Bold(true)
+	warningText     = baseTextStyle.Copy().Foreground(colorWarning).Bold(true)
+	errorText       = baseTextStyle.Copy().Foreground(colorError).Bold(true)
+	folderText      = baseTextStyle.Copy().Foreground(colorFolder).Bold(true)
 	selectedRow     = lipgloss.NewStyle().Background(colorHighlight).Foreground(colorFG)
 )

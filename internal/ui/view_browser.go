@@ -9,68 +9,93 @@ import (
 )
 
 func (m *model) renderBrowser() string {
+	panelWidth := fullPanelWidth(m.width)
+
 	sections := []string{
-		m.renderRepositoryHeader(),
-		m.renderFileList(),
+		m.renderRepositoryHeader(panelWidth),
+		m.renderFileList(panelWidth),
 	}
 
 	if m.downloading && m.downloadProgress != nil {
 		sections = append(sections, m.renderDownloadProgress())
 	}
 	if m.searching {
-		sections = append(sections, accentPanelStyle.Render("Search\n/"+m.searchQuery+"_"))
+		sections = append(sections, titledPanelWithColor(
+			accentTextStyle.Render(" Search "),
+			"/"+m.searchQuery+"_",
+			panelWidth,
+			colorAccent,
+		))
 	}
 
-	sections = append(sections, mutedTextStyle.Render("Enter/open  h/back  space/select  d/download  /search  i/icons  q/quit"))
+	sections = append(sections, joinShortcuts(
+		shortcutLabel("j/k", "nav"),
+		shortcutLabel("Enter", "open/preview"),
+		shortcutLabel("Space", "select"),
+		shortcutLabel("a/u", "all/none"),
+		shortcutLabel("d", "download"),
+		shortcutLabel("/", "search"),
+	))
+
 	return strings.Join(sections, "\n\n")
 }
 
-func (m *model) renderRepositoryHeader() string {
-	path := "Repository"
+func (m *model) renderRepositoryHeader(panelWidth int) string {
+	info := ""
 	if m.currentURL != nil {
-		path = m.currentURL.Repo
-	}
-	if m.currentURL != nil && m.currentURL.Path != "" {
-		path = m.currentURL.Repo + " / " + m.currentURL.Path
+		info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /"
+		if m.currentURL.Path != "" {
+			info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /" + m.currentURL.Path
+		}
 	}
 
 	selected := ""
 	if count := len(m.selectedPath); count > 0 {
-		selected = "  [" + fmt.Sprintf("%d selected", count) + "]"
+		selected = baseTextStyle.Render("  ") + successText.Render(fmt.Sprintf("[%d selected]", count))
 	}
 
-	return accentPanelStyle.Render(headerTextStyle.Render(path) + successText.Render(selected))
+	title := accentTextStyle.Render(" Repository ")
+	content := headerTextStyle.Render(info) + selected
+
+	return titledPanelWithColor(title, content, panelWidth, colorAccent)
 }
 
-func (m *model) renderFileList() string {
+func (m *model) renderFileList(panelWidth int) string {
 	items := m.viewItems()
+
+	title := panelTitle(fmt.Sprintf(" Files (%d) ", len(items)))
+
 	if len(items) == 0 {
-		return panelStyle.Render("Files\n\n" + mutedTextStyle.Render("No files to display."))
+		return titledPanelWithColor(title, mutedTextStyle.Render("No files to display."), panelWidth, colorBorder)
 	}
 
-	nameWidth := max(20, min(m.width-36, 60))
+	nameWidth := max(20, min(panelWidth-36, 60))
 	lines := []string{
-		headerTextStyle.Render(fmt.Sprintf("%-4s %-*s %-7s %10s", "", nameWidth, "Name", "Type", "Size")),
+		headerTextStyle.Render(fmt.Sprintf("     %-*s  %-7s %10s", nameWidth, "Name", "Type", "Size")),
 	}
 
 	start := min(m.scrollOffset, max(len(items)-1, 0))
 	end := min(start+m.visibleListHeight(), len(items))
 	for index := start; index < end; index++ {
 		item := items[index]
-		prefix := "  "
-		if item.Selected {
-			prefix = "■ "
-		}
-		if index == m.cursor {
-			prefix = "▶ "
+
+		// Selection checkbox
+		checkbox := "[ ] "
+		if item.Selected && index == m.cursor {
+			checkbox = "[◉] "
+		} else if item.Selected {
+			checkbox = "[●] "
+		} else if index == m.cursor {
+			checkbox = "[◎] "
 		}
 
+		typeLabel := itemTypeLabel(item)
 		line := fmt.Sprintf(
-			"%-4s %-*s %-7s %10s",
-			prefix,
+			"%s%-*s  %-7s %10s",
+			checkbox,
 			nameWidth,
 			truncate(itemLabel(item, m.asciiMode, m.searching), nameWidth),
-			itemTypeLabel(item),
+			typeLabel,
 			sizeLabel(item, m.folderSizes),
 		)
 
@@ -84,7 +109,7 @@ func (m *model) renderFileList() string {
 		}
 	}
 
-	return panelStyle.Width(max(60, min(m.width-6, 110))).Render(strings.Join(lines, "\n"))
+	return titledPanelWithColor(title, strings.Join(lines, "\n"), panelWidth, colorBorder)
 }
 
 func (m *model) renderDownloadProgress() string {
@@ -101,7 +126,7 @@ func (m *model) renderDownloadProgress() string {
 		mutedTextStyle.Render(truncate(fileName, 72)),
 	}
 
-	return panelStyle.Render(strings.Join(body, "\n"))
+	return panelWithColor(strings.Join(body, "\n"), max(44, min(fullPanelWidth(m.width), 72)), colorBorder)
 }
 
 func itemLabel(item gh.RepoItem, asciiMode, searching bool) string {
@@ -113,32 +138,32 @@ func itemLabel(item gh.RepoItem, asciiMode, searching bool) string {
 	if asciiMode {
 		switch {
 		case item.IsDir():
-			return "[DIR] " + name
+			return "[D] " + name
 		case item.IsLFS():
-			return "[LFS] " + name
+			return "[L] " + name
 		default:
-			return "[FIL] " + name
+			return "[F] " + name
 		}
 	}
 
 	switch {
 	case item.IsDir():
-		return "󰉋 " + name
+		return "◆ " + name
 	case item.IsLFS():
-		return "󰈈 " + name
+		return "◉ " + name
 	default:
-		return "󰈔 " + name
+		return "• " + name
 	}
 }
 
 func itemTypeLabel(item gh.RepoItem) string {
 	switch {
 	case item.IsDir():
-		return "dir"
+		return "DIR"
 	case item.IsLFS():
-		return "lfs"
+		return "LFS"
 	default:
-		return "file"
+		return fileExtLabel(item.Name)
 	}
 }
 
@@ -166,9 +191,9 @@ func humanSize(size uint64) string {
 
 	switch {
 	case value >= 10 || index == 0:
-		return fmt.Sprintf("%.0f%s", value, units[index])
+		return fmt.Sprintf("%.0f %s", value, units[index])
 	default:
-		return fmt.Sprintf("%.1f%s", value, units[index])
+		return fmt.Sprintf("%.1f %s", value, units[index])
 	}
 }
 
@@ -180,4 +205,8 @@ func truncate(value string, width int) string {
 		return "…"
 	}
 	return lipgloss.NewStyle().MaxWidth(width-1).Render(value) + "…"
+}
+
+func panelTitle(text string) string {
+	return successText.Render(text)
 }

@@ -239,3 +239,25 @@ func defaultDownloadDir() (string, error) {
 func stringsTrimmed(value string) string {
 	return strings.TrimSpace(value)
 }
+
+// fileExtLabel returns a short uppercase type tag based on file extension.
+func fileExtLabel(name string) string {
+	dot := strings.LastIndex(name, ".")
+	if dot < 0 || dot == len(name)-1 {
+		return "FILE"
+	}
+	ext := strings.ToUpper(name[dot+1:])
+	switch ext {
+	case "RS", "PY", "JS", "TS", "GO", "RB", "C", "CPP", "H", "JAVA",
+		"MD", "TXT", "JSON", "YAML", "YML", "TOML",
+		"CSS", "HTML", "SCSS", "LESS",
+		"SH", "BAT", "PS1",
+		"MOD", "SUM", "LOCK",
+		"PNG", "JPG", "JPEG", "GIF", "SVG", "ICO",
+		"ZIP", "TAR", "GZ",
+		"XML", "CSV", "SQL",
+		"DOCKERFILE", "MAKEFILE":
+		return ext
+	}
+	return "FILE"
+}

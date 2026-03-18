@@ -1,7 +1,0 @@
-src/
-target/
-tests/
-.github/
-Cargo.toml
-Cargo.lock
-.gitignore
