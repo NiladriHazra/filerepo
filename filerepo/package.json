@@ -8,9 +8,7 @@
     "filerepo": "bin/filerepo.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "postinstall": "node scripts/install.js",
-    "prepack": "npm run build"
+    "postinstall": "node scripts/install.js"
   },
   "keywords": [
     "github",
@@ -22,9 +20,5 @@
   "files": [
     "bin/filerepo.js",
     "scripts/install.js"
-  ],
-  "devDependencies": {
-    "@types/node": "^25.5.0",
-    "typescript": "^5.9.3"
-  }
+  ]
 }

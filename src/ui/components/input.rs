@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::ui::components::branding;
@@ -33,7 +33,6 @@ pub fn render(
         ])
         .split(area);
 
-    // Header
     let header_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -45,13 +44,11 @@ pub fn render(
 
     branding::render_logo(f, header_area[1]);
 
-    // Version tag
     let version = Paragraph::new(branding::version_line())
         .alignment(Alignment::Center)
         .style(Style::default().bg(BG_COLOR));
     f.render_widget(version, vertical_layout[2]);
 
-    // Description
     let desc_text = Line::from(Span::styled(
         "Grab any file or folder from GitHub. No clones. Just what you need.",
         Style::default()
@@ -63,7 +60,6 @@ pub fn render(
         .style(Style::default().bg(BG_COLOR));
     f.render_widget(desc, vertical_layout[3]);
 
-    // Input box
     let input_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -126,7 +122,6 @@ pub fn render(
         .style(Style::default().fg(FG_COLOR));
     f.render_widget(input, input_area[1]);
 
-    // Instructions
     let instructions_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -199,7 +194,6 @@ pub fn render(
         .wrap(Wrap { trim: false });
     f.render_widget(info, instructions_area[1]);
 
-    // Controls
     let controls_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -239,7 +233,6 @@ pub fn render(
         .style(Style::default().bg(BG_COLOR));
     f.render_widget(controls_widget, controls_area[1]);
 
-    // Status Bar
     if !status_msg.is_empty() {
         let status_area = Layout::default()
             .direction(Direction::Vertical)

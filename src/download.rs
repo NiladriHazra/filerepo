@@ -2,8 +2,8 @@ use crate::github::{GitHubClient, RepoItem};
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::fs;
 
 const MAX_CONCURRENT_DOWNLOADS: usize = 8;

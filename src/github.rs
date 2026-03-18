@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use url::Url;
 
@@ -222,7 +222,9 @@ pub struct GitTreeEntry {
 pub enum GitHubError {
     #[error("Invalid token. Falling back to public API.")]
     InvalidToken,
-    #[error("Rate limit exceeded for {0}. Consider adding a token via `filerepo config set token YOUR_TOKEN`.")]
+    #[error(
+        "Rate limit exceeded for {0}. Consider adding a token via `filerepo config set token YOUR_TOKEN`."
+    )]
     RateLimitReached(String),
     #[error("Resource not found: {0}")]
     NotFound(String),

@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::Span,
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::ui::components::branding;
@@ -48,7 +48,6 @@ pub fn render(f: &mut Frame, area: Rect, frame_count: u64, status_msg: &str) {
     .style(Style::default().bg(BG_COLOR));
     f.render_widget(status, vertical_layout[2]);
 
-    // Animated progress dots
     let spinner_frames = [
         "   .      ",
         "   ..     ",
@@ -84,7 +83,6 @@ pub fn render(f: &mut Frame, area: Rect, frame_count: u64, status_msg: &str) {
     );
     f.render_widget(spinner, spinner_area[1]);
 
-    // Hint
     let hint = Paragraph::new(Span::styled(
         "Press ESC to cancel",
         Style::default().fg(BORDER_COLOR),

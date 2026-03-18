@@ -14,26 +14,17 @@ use filerepo::ui;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-
-    /// GitHub repository URL
     url: Option<String>,
-
-    /// Download files to current directory
     #[arg(long)]
     cwd: bool,
-
-    /// Download files directly without creating a repo subfolder
     #[arg(long)]
     no_folder: bool,
-
-    /// One-time GitHub token (not stored)
     #[arg(long)]
     token: Option<String>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Manage configuration
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
@@ -42,33 +33,26 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ConfigCommand {
-    /// Set a config value
     Set {
         #[command(subcommand)]
         target: SetTarget,
     },
-    /// Remove a config value
     Unset {
         #[command(subcommand)]
         target: UnsetTarget,
     },
-    /// Show current configuration
     List,
 }
 
 #[derive(Subcommand)]
 enum SetTarget {
-    /// Set GitHub personal access token
     Token { value: String },
-    /// Set custom download path
     Path { value: String },
 }
 
 #[derive(Subcommand)]
 enum UnsetTarget {
-    /// Remove saved token
     Token,
-    /// Remove custom download path
     Path,
 }
 
@@ -136,7 +120,7 @@ fn print_config(config: &Config) {
 
     match &config.download_path {
         Some(path) => println!("  Download Path: {path}"),
-        None => println!("  Download Path: (default ~/Downloads)"),
+        None => println!("  Download Path: (default current working directory)"),
     }
 }
 

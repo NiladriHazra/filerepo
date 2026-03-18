@@ -3,13 +3,13 @@ use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::Mutex;
 
 use crate::download::DownloadProgress;
@@ -20,6 +20,8 @@ pub mod theme;
 
 const LIST_VISIBLE_HEIGHT: usize = 10;
 const PAGE_STEP: usize = 10;
+const MAX_PREVIEW_BYTES: u64 = 256 * 1024;
+const MAX_PREVIEW_CHARS: usize = 40_000;
 
 fn install_panic_hook() {
     let original_hook = std::panic::take_hook();
@@ -35,6 +37,43 @@ pub enum AppMode {
     Input,
     Searching,
     Browse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewStatus {
+    Loading,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePreview {
+    pub path: String,
+    pub content: String,
+    pub scroll: usize,
+    pub status: PreviewStatus,
+}
+
+impl FilePreview {
+    fn loading(path: String) -> Self {
+        Self {
+            path,
+            content: String::new(),
+            scroll: 0,
+            status: PreviewStatus::Loading,
+        }
+    }
+
+    fn line_count(&self) -> usize {
+        self.content.lines().count().max(1)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SavePrompt {
+    pub input: String,
+    pub cursor: usize,
+    pub item_count: usize,
 }
 
 enum BackNavigation {
@@ -59,6 +98,12 @@ enum EnterDirectory {
     Remote {
         url: GitHubUrl,
     },
+}
+
+enum OpenItem {
+    None,
+    Directory(EnterDirectory),
+    Preview(RepoItem),
 }
 
 enum DownloadOutcome {
@@ -93,6 +138,9 @@ pub struct AppState {
     pub is_searching: bool,
     pub search_query: String,
     pub selected_paths: HashSet<String>,
+    pub preview: Option<FilePreview>,
+    pub save_prompt: Option<SavePrompt>,
+    pub download_path_override: Option<String>,
 }
 
 impl Default for AppState {
@@ -127,6 +175,9 @@ impl AppState {
             is_searching: false,
             search_query: String::new(),
             selected_paths: HashSet::new(),
+            preview: None,
+            save_prompt: None,
+            download_path_override: None,
         }
     }
 
@@ -256,6 +307,22 @@ impl AppState {
                 .collect()
         }
     }
+
+    pub fn get_selected_or_focused_items(&self) -> Vec<RepoItem> {
+        let selected = self.get_selected_items();
+        if !selected.is_empty() {
+            return selected;
+        }
+
+        self.get_view_items()
+            .get(self.cursor)
+            .cloned()
+            .map(|mut item| {
+                item.selected = true;
+                vec![item]
+            })
+            .unwrap_or_default()
+    }
 }
 
 pub async fn run_tui(
@@ -280,7 +347,6 @@ pub async fn run_tui(
     state_init.cwd = cwd;
     state_init.no_folder = no_folder;
 
-    // Auto-detect local git remote if no URL provided
     if initial_url.is_none() {
         if let Some(remote) = GitHubUrl::get_local_git_remote() {
             state_init.url_input = remote;
@@ -386,6 +452,14 @@ async fn event_loop(
                             selected_count: state_lock.selected_paths.len(),
                         };
                         components::browser::render(f, size, &browser_state);
+
+                        if let Some(ref preview) = state_lock.preview {
+                            components::overlay::render_preview(f, size, preview);
+                        }
+
+                        if let Some(ref save_prompt) = state_lock.save_prompt {
+                            components::overlay::render_save_prompt(f, size, save_prompt);
+                        }
                     }
                 }
 
@@ -524,6 +598,14 @@ async fn handle_input_mode_browse(
     state: Arc<Mutex<AppState>>,
     client: &GitHubClient,
 ) -> Result<bool> {
+    if app_state.save_prompt.is_some() {
+        return handle_save_prompt_input(key, &mut app_state, state);
+    }
+
+    if app_state.preview.is_some() {
+        return handle_preview_input(key, &mut app_state);
+    }
+
     match key.code {
         KeyCode::Char('q' | 'Q') if !app_state.is_searching => return Ok(true),
         KeyCode::Esc if !app_state.is_searching => {
@@ -573,12 +655,12 @@ async fn handle_input_mode_browse(
             apply_back_navigation(navigation, state, client).await?;
         }
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') if !app_state.is_searching => {
-            let navigation = prepare_enter_directory(&mut app_state);
+            let navigation = prepare_open_item(&mut app_state);
             drop(app_state);
-            apply_enter_directory(navigation, state, client).await?;
+            apply_open_item(navigation, state, client).await?;
         }
         KeyCode::Char('d' | 'D') if !app_state.is_searching => {
-            maybe_start_download(&mut app_state, state);
+            maybe_start_download(&mut app_state);
         }
         _ => {}
     }
@@ -613,6 +695,142 @@ fn begin_search(app_state: &mut AppState) {
     app_state.is_searching = true;
     app_state.search_query.clear();
     app_state.reset_browser_position(0);
+}
+
+fn handle_preview_input(key: KeyEvent, app_state: &mut AppState) -> Result<bool> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('Q') => {
+            app_state.preview = None;
+            return Ok(false);
+        }
+        _ => {}
+    }
+
+    let Some(preview) = app_state.preview.as_mut() else {
+        return Ok(false);
+    };
+
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            preview.scroll = preview.scroll.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            preview.scroll = preview
+                .scroll
+                .saturating_add(1)
+                .min(preview.line_count().saturating_sub(1));
+        }
+        KeyCode::PageUp => {
+            preview.scroll = preview.scroll.saturating_sub(PAGE_STEP);
+        }
+        KeyCode::PageDown => {
+            preview.scroll = preview
+                .scroll
+                .saturating_add(PAGE_STEP)
+                .min(preview.line_count().saturating_sub(1));
+        }
+        KeyCode::Home | KeyCode::Char('g') => {
+            preview.scroll = 0;
+        }
+        KeyCode::End | KeyCode::Char('G') => {
+            preview.scroll = preview.line_count().saturating_sub(1);
+        }
+        _ => {}
+    }
+
+    Ok(false)
+}
+
+fn handle_save_prompt_input(
+    key: KeyEvent,
+    app_state: &mut AppState,
+    state: Arc<Mutex<AppState>>,
+) -> Result<bool> {
+    if key.code == KeyCode::Esc {
+        app_state.save_prompt = None;
+        return Ok(false);
+    }
+
+    if key.code == KeyCode::Enter {
+        let raw_path = app_state
+            .save_prompt
+            .as_ref()
+            .map(|prompt| prompt.input.trim().to_string())
+            .unwrap_or_default();
+        let chosen_path = if raw_path.is_empty() {
+            default_download_dir()?.display().to_string()
+        } else {
+            raw_path
+        };
+
+        let path_buf = std::path::PathBuf::from(&chosen_path);
+        if path_buf.exists() && !path_buf.is_dir() {
+            app_state.show_toast(
+                "Save path must be a directory.".to_string(),
+                ToastType::Error,
+            );
+            return Ok(false);
+        }
+
+        app_state.download_path_override = Some(chosen_path);
+        app_state.save_prompt = None;
+        app_state.downloading = true;
+        tokio::spawn(async move {
+            let _ = perform_download(state).await;
+        });
+        return Ok(false);
+    }
+
+    let Some(prompt) = app_state.save_prompt.as_mut() else {
+        return Ok(false);
+    };
+
+    match key.code {
+        KeyCode::Char('w' | 'u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            prompt.input.clear();
+            prompt.cursor = 0;
+        }
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+        {
+            let pos = prompt.cursor;
+            prompt.input.insert(pos, c);
+            prompt.cursor += 1;
+        }
+        KeyCode::Backspace => {
+            if prompt.cursor > 0 {
+                let pos = prompt.cursor;
+                prompt.input.remove(pos - 1);
+                prompt.cursor -= 1;
+            }
+        }
+        KeyCode::Delete => {
+            if prompt.cursor < prompt.input.len() {
+                prompt.input.remove(prompt.cursor);
+            }
+        }
+        KeyCode::Left => {
+            if prompt.cursor > 0 {
+                prompt.cursor -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if prompt.cursor < prompt.input.len() {
+                prompt.cursor += 1;
+            }
+        }
+        KeyCode::Home => {
+            prompt.cursor = 0;
+        }
+        KeyCode::End => {
+            prompt.cursor = prompt.input.len();
+        }
+        _ => {}
+    }
+
+    Ok(false)
 }
 
 fn prepare_back_navigation(app_state: &mut AppState) -> BackNavigation {
@@ -705,6 +923,19 @@ fn prepare_enter_directory(app_state: &mut AppState) -> EnterDirectory {
     }
 }
 
+fn prepare_open_item(app_state: &mut AppState) -> OpenItem {
+    let items = app_state.get_view_items();
+    let Some(item) = items.get(app_state.cursor).cloned() else {
+        return OpenItem::None;
+    };
+
+    if item.is_file() {
+        return OpenItem::Preview(item);
+    }
+
+    OpenItem::Directory(prepare_enter_directory(app_state))
+}
+
 async fn apply_enter_directory(
     navigation: EnterDirectory,
     state: Arc<Mutex<AppState>>,
@@ -737,12 +968,24 @@ async fn apply_enter_directory(
     Ok(())
 }
 
-fn maybe_start_download(app_state: &mut AppState, state: Arc<Mutex<AppState>>) {
-    if app_state.get_selected_items().is_empty() {
-        app_state.show_toast(
-            "No items selected! Use Space to select.".to_string(),
-            ToastType::Warning,
-        );
+async fn apply_open_item(
+    navigation: OpenItem,
+    state: Arc<Mutex<AppState>>,
+    client: &GitHubClient,
+) -> Result<()> {
+    match navigation {
+        OpenItem::None => {}
+        OpenItem::Directory(navigation) => apply_enter_directory(navigation, state, client).await?,
+        OpenItem::Preview(item) => open_file_preview(state, client.clone(), item),
+    }
+
+    Ok(())
+}
+
+fn maybe_start_download(app_state: &mut AppState) {
+    let items = app_state.get_selected_or_focused_items();
+    if items.is_empty() {
+        app_state.show_toast("Nothing to download here.".to_string(), ToastType::Warning);
         return;
     }
 
@@ -750,10 +993,78 @@ fn maybe_start_download(app_state: &mut AppState, state: Arc<Mutex<AppState>>) {
         return;
     }
 
-    app_state.downloading = true;
-    tokio::spawn(async move {
-        let _ = perform_download(state).await;
+    let default_path = default_download_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    app_state.save_prompt = Some(SavePrompt {
+        cursor: default_path.len(),
+        input: default_path,
+        item_count: items.len(),
     });
+}
+
+fn open_file_preview(state: Arc<Mutex<AppState>>, client: GitHubClient, item: RepoItem) {
+    tokio::spawn(async move {
+        {
+            let mut app_state = state.lock().await;
+            app_state.preview = Some(FilePreview::loading(item.path.clone()));
+        }
+
+        let preview_result = fetch_preview_content(&client, &item).await;
+
+        let mut app_state = state.lock().await;
+        if let Some(preview) = app_state.preview.as_mut() {
+            if preview.path == item.path {
+                match preview_result {
+                    Ok(content) => {
+                        preview.content = content;
+                        preview.status = PreviewStatus::Ready;
+                        preview.scroll = 0;
+                    }
+                    Err(error) => {
+                        preview.content = error.to_string();
+                        preview.status = PreviewStatus::Error;
+                        preview.scroll = 0;
+                    }
+                }
+            }
+        }
+    });
+}
+
+async fn fetch_preview_content(client: &GitHubClient, item: &RepoItem) -> Result<String> {
+    if item.is_lfs() {
+        anyhow::bail!("Git LFS files cannot be previewed here. Download the file to inspect it.");
+    }
+
+    if item.actual_size().unwrap_or(0) > MAX_PREVIEW_BYTES {
+        anyhow::bail!("This file is too large to preview in-app. Download it to inspect locally.");
+    }
+
+    let Some(download_url) = item.actual_download_url() else {
+        anyhow::bail!("No preview URL available for this file.");
+    };
+
+    let bytes = client.download_binary(download_url).await?;
+    if bytes.contains(&0) {
+        anyhow::bail!("Binary files are not previewed in the TUI.");
+    }
+
+    let content = String::from_utf8(bytes)
+        .map_err(|_| anyhow::anyhow!("This file is not UTF-8 text, so preview is unavailable."))?;
+
+    if content.chars().count() > MAX_PREVIEW_CHARS {
+        let truncated = content.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        Ok(format!(
+            "{truncated}\n\n[preview truncated after {MAX_PREVIEW_CHARS} characters]"
+        ))
+    } else {
+        Ok(content)
+    }
+}
+
+fn default_download_dir() -> Result<std::path::PathBuf> {
+    std::env::current_dir().context("Could not get current working directory")
 }
 
 fn spawn_repo_load(state: Arc<Mutex<AppState>>, client: GitHubClient) {
@@ -790,7 +1101,6 @@ async fn load_repo(state: Arc<Mutex<AppState>>, client: GitHubClient, mut gh_url
         .fetch_recursive_tree(&gh_url.owner, &gh_url.repo, &gh_url.branch)
         .await;
 
-    // Handle invalid token - fallback to public API
     if let Err(GitHubError::InvalidToken) = &tree_result {
         {
             let mut s = state_c.lock().await;
@@ -807,7 +1117,6 @@ async fn load_repo(state: Arc<Mutex<AppState>>, client: GitHubClient, mut gh_url
         }
     }
 
-    // Try master branch if main fails
     if let Err(GitHubError::NotFound(_)) = &tree_result {
         if gh_url.branch == "main" {
             gh_url.branch = "master".to_string();
@@ -924,17 +1233,18 @@ async fn load_repo(state: Arc<Mutex<AppState>>, client: GitHubClient, mut gh_url
 async fn perform_download(state: Arc<Mutex<AppState>>) -> Result<()> {
     use crate::download::Downloader;
 
-    let (selected_items, current_url, full_tree, token, custom_path, cwd, no_folder) = {
+    let (selected_items, current_url, full_tree, token, custom_path, cwd, no_folder, path_override) = {
         let s = state.lock().await;
         if let Some(url) = &s.current_url {
             (
-                s.get_selected_items(),
+                s.get_selected_or_focused_items(),
                 url.clone(),
                 s.full_tree.clone(),
                 s.github_token.clone(),
                 s.download_path.clone(),
                 s.cwd,
                 s.no_folder,
+                s.download_path_override.clone(),
             )
         } else {
             return Ok(());
@@ -959,14 +1269,14 @@ async fn perform_download(state: Arc<Mutex<AppState>>) -> Result<()> {
             return Ok(DownloadOutcome::Empty);
         }
 
-        let download_dir = if cwd {
-            std::env::current_dir().context("Could not get current working directory")?
+        let download_dir = if let Some(path) = path_override {
+            std::path::PathBuf::from(path)
+        } else if cwd {
+            default_download_dir()?
         } else if let Some(path) = custom_path {
             std::path::PathBuf::from(path)
         } else {
-            dirs::download_dir()
-                .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-                .context("Could not find Downloads directory")?
+            default_download_dir()?
         };
 
         let download_dir = if no_folder {
@@ -1001,6 +1311,7 @@ async fn perform_download(state: Arc<Mutex<AppState>>) -> Result<()> {
     let mut s = state.lock().await;
     s.downloading = false;
     s.download_progress = None;
+    s.download_path_override = None;
 
     match outcome {
         Ok(DownloadOutcome::Empty) => {

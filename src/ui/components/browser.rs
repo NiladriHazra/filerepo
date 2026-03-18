@@ -1,11 +1,11 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
-    Frame,
 };
 
 use crate::github::{GitHubUrl, RepoItem};
@@ -21,7 +21,7 @@ pub struct BrowserState<'a> {
     pub cursor: usize,
     pub scroll_offset: usize,
     pub is_downloading: bool,
-    pub download_progress: Option<(usize, usize)>, // (completed, total)
+    pub download_progress: Option<(usize, usize)>,
     pub download_current_file: &'a str,
     pub ascii_mode: bool,
     pub folder_sizes: &'a HashMap<String, u64>,
@@ -274,7 +274,7 @@ fn render_help_bar(f: &mut Frame, area: Rect) {
         Span::styled(" Nav", Style::default().fg(BORDER_COLOR)),
         help_sep(),
         help_key("Enter", SUCCESS_COLOR),
-        Span::styled(" Open", Style::default().fg(BORDER_COLOR)),
+        Span::styled(" Open/Preview", Style::default().fg(BORDER_COLOR)),
         help_sep(),
         help_key("Space", WARNING_COLOR),
         Span::styled(" Select", Style::default().fg(BORDER_COLOR)),
