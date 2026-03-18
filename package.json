@@ -1,5 +1,6 @@
 {
-  "name": "@filerepo/filerepo",
+  "name": "@NiladriHazra/filerepo",
+  "author": "byteHumi",
   "version": "1.0.0",
   "description": "A beautiful TUI to browse, search, and download files from GitHub repositories",
   "license": "MIT",

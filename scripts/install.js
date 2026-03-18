@@ -6,7 +6,7 @@ const path = require("node:path");
 const { createGunzip } = require("node:zlib");
 
 const VERSION = require("../package.json").version;
-const REPO = "niladri/filerepo"; // ← change to your GitHub username/repo
+const REPO = "NiladriHazra/filerepo";
 
 const PLATFORM_MAP = {
   darwin: "apple-darwin",
