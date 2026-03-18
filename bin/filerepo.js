@@ -40,15 +40,22 @@ const path = __importStar(require("node:path"));
 const binaryName = process.platform === "win32" ? "filerepo.exe" : "filerepo";
 function resolveBinary() {
     const candidates = [
-        path.resolve(__dirname, "..", "target", "release", binaryName),
-        path.resolve(__dirname, "..", "target", "debug", binaryName),
+        path.resolve(__dirname, "..", binaryName),
+        path.resolve(__dirname, "..", "dist", binaryName),
         path.join(__dirname, binaryName),
     ];
-    return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+    return (candidates.find((candidate) => {
+        try {
+            return fs.statSync(candidate).isFile();
+        }
+        catch {
+            return false;
+        }
+    }) ?? null);
 }
 const binary = resolveBinary();
 if (!binary) {
-    console.error("filerepo binary not found. Build with `cargo build --release` or reinstall.");
+    console.error("filerepo binary not found. Build with `go build -o bin/filerepo ./cmd/filerepo` or reinstall.");
     process.exit(1);
 }
 const result = (0, node_child_process_1.spawnSync)(binary, process.argv.slice(2), { stdio: "inherit" });

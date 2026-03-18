@@ -1,2 +1,9 @@
-/target
 node_modules/
+/target/
+/.tools/
+/.cache/
+/bin/filerepo
+/bin/filerepo.exe
+/filerepo
+/filerepo.exe
+/dist/

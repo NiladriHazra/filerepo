@@ -1,6 +1,6 @@
 # filerepo
 
-![npm](https://img.shields.io/npm/v/@bytehumi/filerepo?color=blue) ![crates.io](https://img.shields.io/crates/v/filerepo?color=blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)
+![npm](https://img.shields.io/npm/v/@bytehumi/filerepo?color=blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![Go](https://img.shields.io/badge/go-1.22+-00ADD8)
 
 > Grab any file or folder from GitHub. No clones. Just what you need.
 
@@ -14,13 +14,13 @@ A terminal UI that lets you browse any GitHub repository and download exactly th
 # npm
 npm install -g @bytehumi/filerepo
 
-# cargo
-cargo install filerepo
+# go
+go install github.com/NiladriHazra/filerepo/cmd/filerepo@latest
 
 # or build from source
 git clone https://github.com/NiladriHazra/filerepo.git
 cd filerepo
-cargo build --release
+go build -o bin/filerepo ./cmd/filerepo
 ```
 
 ## Usage
@@ -96,13 +96,13 @@ filerepo config unset path
 ## Features
 
 - Browse any public GitHub repo without cloning
-- Fuzzy search across the entire file tree
+- Search across the entire file tree
 - Select individual files or entire folders
 - Parallel downloads (8 concurrent)
 - Progress bar with file-by-file status
 - LFS file support
 - Auto-detects local git remote as default URL
-- Catppuccin Mocha theme
+- Go-based CLI and TUI implementation
 - Dirs-first sorted file listing
 - Fallback to folder-by-folder mode for massive repos
 
