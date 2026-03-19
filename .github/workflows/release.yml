@@ -14,14 +14,24 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
             target: aarch64-unknown-linux-gnu
           - os: macos-latest
+            goos: darwin
+            goarch: arm64
             target: aarch64-apple-darwin
           - os: macos-13
+            goos: darwin
+            goarch: amd64
             target: x86_64-apple-darwin
-          - os: windows-latest
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
             target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
@@ -29,24 +39,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          targets: ${{ matrix.target }}
+          go-version: "1.22"
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          go build -ldflags="-s -w" -o filerepo${EXT} ./cmd/filerepo
 
       - name: Package (unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../filerepo-${{ matrix.target }}.tar.gz filerepo
+        if: matrix.goos != 'windows'
+        run: tar czf filerepo-${{ matrix.target }}.tar.gz filerepo
 
       - name: Package (windows)
-        if: runner.os == 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          Compress-Archive -Path filerepo.exe -DestinationPath ../../../filerepo-${{ matrix.target }}.zip
+        if: matrix.goos == 'windows'
+        run: zip filerepo-${{ matrix.target }}.zip filerepo.exe
 
       - uses: actions/upload-artifact@v4
         with:
