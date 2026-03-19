@@ -2,7 +2,17 @@
 
 ![npm](https://img.shields.io/npm/v/@bytehumi/filerepo?color=blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![Go](https://img.shields.io/badge/go-1.22+-00ADD8)
 
-> Grab any file or folder from GitHub. No clones. Just what you need.
+> Get any file or folder from GitHub. No clones needed. Just what you need.
+
+```bash
+npx @bytehumi/filerepo
+```
+
+or install globally:
+
+```bash
+npm install -g @bytehumi/filerepo
+```
 
 ![filerepo](https://pub-51091dcf1e9d4b04bb2e74f489c4f346.r2.dev/76e517e50d0ae0ab208ce38d64e4d96ba4ca5676fd62b2034456747fef585f6d.png)
 
@@ -29,7 +39,10 @@ The current Go version adds quite a bit beyond the original "browse and download
 ## Install
 
 ```bash
-# npm
+# run without installing
+npx @bytehumi/filerepo
+
+# or install globally
 npm install -g @bytehumi/filerepo
 
 # go
