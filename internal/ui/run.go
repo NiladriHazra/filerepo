@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NiladriHazra/filerepo/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Run starts the terminal UI.
-func Run(initialURL, token, downloadPath string, cwd, noFolder bool) error {
-	model := newModel(initialURL, token, downloadPath, cwd, noFolder)
+func Run(initialURL string, cfg config.Config, options RunOptions) error {
+	model := newModel(initialURL, cfg, options)
 	if stringsTrimmed(initialURL) != "" {
 		model.mode = modeLoading
 		model.statusMessage = "Parsing URL..."
@@ -26,7 +27,7 @@ func Run(initialURL, token, downloadPath string, cwd, noFolder bool) error {
 func (m *model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 	if stringsTrimmed(m.urlInput) != "" && m.mode == modeLoading {
-		cmds = append(cmds, loadRepoCmd(m.urlInput, m.sessionToken))
+		cmds = append(cmds, loadRepoCmd(m.urlInput, m.sessionToken, m.configState.Cache.Enabled, m.configState.CacheTTL()))
 	}
 	return tea.Batch(cmds...)
 }

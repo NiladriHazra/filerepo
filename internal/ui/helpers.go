@@ -6,9 +6,16 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	gh "github.com/NiladriHazra/filerepo/internal/github"
 )
+
+type searchOptions struct {
+	text       string
+	ext        string
+	typeFilter string
+}
 
 func cloneItems(items []gh.RepoItem) []gh.RepoItem {
 	return append([]gh.RepoItem(nil), items...)
@@ -178,6 +185,33 @@ func mapTreeToItems(tree gh.GitTreeResponse, owner, repo, branch string) []gh.Re
 	return items
 }
 
+func mapCompareFilesToItems(files []gh.CompareFile) []gh.RepoItem {
+	items := make([]gh.RepoItem, 0, len(files))
+	for _, file := range files {
+		if stringsTrimmed(file.RawURL) == "" {
+			continue
+		}
+
+		name := file.Filename
+		if slash := strings.LastIndex(file.Filename, "/"); slash >= 0 {
+			name = file.Filename[slash+1:]
+		}
+
+		items = append(items, gh.RepoItem{
+			Name:        name,
+			ItemType:    "file",
+			Path:        file.Filename,
+			DownloadURL: file.RawURL,
+			HTMLURL:     file.BlobURL,
+			Status:      file.Status,
+			TargetKind:  "compare",
+		})
+	}
+
+	sortItemsByPath(items)
+	return items
+}
+
 func collectDownloadItems(ctx context.Context, client *gh.Client, selectedItems, fullTree []gh.RepoItem, hasFullTree bool) ([]gh.RepoItem, error) {
 	var items []gh.RepoItem
 	for _, item := range selectedItems {
@@ -240,6 +274,83 @@ func stringsTrimmed(value string) string {
 	return strings.TrimSpace(value)
 }
 
+func parseSearchQuery(query string) searchOptions {
+	options := searchOptions{}
+	var terms []string
+
+	for _, token := range strings.Fields(strings.ToLower(query)) {
+		switch {
+		case strings.HasPrefix(token, "ext:"):
+			options.ext = strings.TrimPrefix(token, "ext:")
+			options.ext = strings.TrimPrefix(options.ext, ".")
+		case strings.HasPrefix(token, "type:"):
+			options.typeFilter = strings.TrimPrefix(token, "type:")
+		case strings.HasPrefix(token, "kind:"):
+			options.typeFilter = strings.TrimPrefix(token, "kind:")
+		default:
+			terms = append(terms, token)
+		}
+	}
+
+	options.text = strings.Join(terms, " ")
+	return options
+}
+
+func matchesSearch(item gh.RepoItem, options searchOptions) bool {
+	switch options.typeFilter {
+	case "", "any":
+	case "dir", "folder":
+		if !item.IsDir() {
+			return false
+		}
+	case "file":
+		if !item.IsFile() || item.IsLFS() {
+			return false
+		}
+	case "lfs":
+		if !item.IsLFS() {
+			return false
+		}
+	default:
+		return false
+	}
+
+	if options.ext != "" && fileExtLower(item.Name) != options.ext {
+		return false
+	}
+
+	if options.text == "" {
+		return true
+	}
+
+	path := strings.ToLower(item.Path)
+	if strings.Contains(path, options.text) {
+		return true
+	}
+	return fuzzyMatch(path, options.text)
+}
+
+func fuzzyMatch(value, query string) bool {
+	valueRunes := []rune(strings.ToLower(value))
+	queryRunes := []rune(strings.ToLower(strings.ReplaceAll(query, " ", "")))
+	if len(queryRunes) == 0 {
+		return true
+	}
+
+	index := 0
+	for _, current := range valueRunes {
+		if current != unicode.ToLower(queryRunes[index]) {
+			continue
+		}
+		index++
+		if index == len(queryRunes) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // fileExtLabel returns a short uppercase type tag based on file extension.
 func fileExtLabel(name string) string {
 	dot := strings.LastIndex(name, ".")
@@ -260,4 +371,12 @@ func fileExtLabel(name string) string {
 		return ext
 	}
 	return "FILE"
+}
+
+func fileExtLower(name string) string {
+	dot := strings.LastIndex(name, ".")
+	if dot < 0 || dot == len(name)-1 {
+		return ""
+	}
+	return strings.ToLower(name[dot+1:])
 }

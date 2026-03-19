@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/NiladriHazra/filerepo/internal/cache"
 	"github.com/NiladriHazra/filerepo/internal/download"
 	gh "github.com/NiladriHazra/filerepo/internal/github"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,10 +23,17 @@ type loadResult struct {
 	cursor       int
 	warning      string
 	sessionToken string
+	repoURL      string
+	metadata     gh.RepoMetadata
+	refs         []gh.RepoRef
+	readme       gh.Readme
+	releases     []gh.Release
+	rateLimit    gh.RateLimitStatus
 }
 
 type downloadRequest struct {
 	currentURL   gh.URL
+	repoURL      string
 	selected     []gh.RepoItem
 	fullTree     []gh.RepoItem
 	hasFullTree  bool
@@ -34,10 +42,12 @@ type downloadRequest struct {
 	overridePath string
 	cwd          bool
 	noFolder     bool
+	conflict     download.ConflictStrategy
+	outputMode   download.OutputMode
 	progress     *download.Progress
 }
 
-func loadRepoCmd(rawURL, token string) tea.Cmd {
+func loadRepoCmd(rawURL, token string, cacheEnabled bool, cacheTTL time.Duration) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
@@ -47,7 +57,7 @@ func loadRepoCmd(rawURL, token string) tea.Cmd {
 			return repoLoadFailedMsg{err: fmt.Errorf("invalid URL: %w", err)}
 		}
 
-		result, err := loadRepository(ctx, parsed, token)
+		result, err := loadRepository(ctx, parsed, token, cacheEnabled, cacheTTL)
 		if err != nil {
 			return repoLoadFailedMsg{err: err}
 		}
@@ -61,11 +71,30 @@ func loadRepoCmd(rawURL, token string) tea.Cmd {
 			cursor:       result.cursor,
 			warning:      result.warning,
 			sessionToken: result.sessionToken,
+			repoURL:      result.repoURL,
+			metadata:     result.metadata,
+			refs:         result.refs,
+			readme:       result.readme,
+			releases:     result.releases,
+			rateLimit:    result.rateLimit,
 		}
 	}
 }
 
-func loadRepository(ctx context.Context, target gh.URL, token string) (loadResult, error) {
+func loadRepository(ctx context.Context, target gh.URL, token string, cacheEnabled bool, cacheTTL time.Duration) (loadResult, error) {
+	switch target.Kind {
+	case gh.TargetCompare:
+		return loadCompareView(ctx, target, token)
+	case gh.TargetPullRequest:
+		return loadPullRequestView(ctx, target, token)
+	}
+
+	if cacheEnabled {
+		if cached, ok, err := loadCachedRepository(target, cacheTTL); err == nil && ok {
+			return snapshotToLoadResult(target, cached, token), nil
+		}
+	}
+
 	client := gh.NewClient(token)
 	sessionToken := token
 	warning := ""
@@ -97,7 +126,8 @@ func loadRepository(ctx context.Context, target gh.URL, token string) (loadResul
 		}
 
 		target.Path = browsePath
-		return loadResult{
+		extras := loadRepositoryExtras(ctx, client, target.Owner, target.Repo, target.Branch)
+		result := loadResult{
 			currentURL:   target,
 			items:        currentItems,
 			fullTree:     allItems,
@@ -106,7 +136,17 @@ func loadRepository(ctx context.Context, target gh.URL, token string) (loadResul
 			cursor:       cursor,
 			warning:      warning,
 			sessionToken: sessionToken,
-		}, nil
+			repoURL:      target.WebURL(),
+			metadata:     extras.metadata,
+			refs:         extras.refs,
+			readme:       extras.readme,
+			releases:     extras.releases,
+			rateLimit:    client.Status(),
+		}
+		if cacheEnabled {
+			_ = saveCachedRepository(result)
+		}
+		return result, nil
 	default:
 		return loadFolderView(ctx, client, target, warning, sessionToken)
 	}
@@ -133,6 +173,7 @@ func loadFolderView(ctx context.Context, client *gh.Client, target gh.URL, warni
 		cursor = findCursorByPath(items, selectedFilePath)
 	}
 
+	extras := loadRepositoryExtras(ctx, client, target.Owner, target.Repo, target.Branch)
 	return loadResult{
 		currentURL:   target,
 		items:        items,
@@ -141,6 +182,67 @@ func loadFolderView(ctx context.Context, client *gh.Client, target gh.URL, warni
 		cursor:       cursor,
 		warning:      warning,
 		sessionToken: sessionToken,
+		repoURL:      target.WebURL(),
+		metadata:     extras.metadata,
+		refs:         extras.refs,
+		readme:       extras.readme,
+		releases:     extras.releases,
+		rateLimit:    client.Status(),
+	}, nil
+}
+
+func loadCompareView(ctx context.Context, target gh.URL, token string) (loadResult, error) {
+	client := gh.NewClient(token)
+	comparison, err := client.FetchComparison(ctx, target.Owner, target.Repo, target.CompareBase, target.CompareHead)
+	if err != nil {
+		return loadResult{}, err
+	}
+
+	items := mapCompareFilesToItems(comparison.Files)
+	target.Branch = comparison.HeadRef
+	extras := loadRepositoryExtras(ctx, client, target.Owner, target.Repo, comparison.HeadRef)
+	return loadResult{
+		currentURL:   target,
+		items:        items,
+		fullTree:     items,
+		hasFullTree:  true,
+		folderSizes:  map[string]uint64{},
+		cursor:       0,
+		sessionToken: token,
+		repoURL:      target.WebURL(),
+		metadata:     extras.metadata,
+		refs:         extras.refs,
+		readme:       extras.readme,
+		releases:     extras.releases,
+		rateLimit:    client.Status(),
+	}, nil
+}
+
+func loadPullRequestView(ctx context.Context, target gh.URL, token string) (loadResult, error) {
+	client := gh.NewClient(token)
+	pullRequest, err := client.FetchPullRequest(ctx, target.Owner, target.Repo, target.PullNumber)
+	if err != nil {
+		return loadResult{}, err
+	}
+
+	items := mapCompareFilesToItems(pullRequest.Files)
+	target.Branch = pullRequest.HeadRef
+	extras := loadRepositoryExtras(ctx, client, target.Owner, target.Repo, pullRequest.HeadRef)
+	return loadResult{
+		currentURL:   target,
+		items:        items,
+		fullTree:     items,
+		hasFullTree:  true,
+		folderSizes:  map[string]uint64{},
+		cursor:       0,
+		warning:      fmt.Sprintf("Pull request #%d: %s", pullRequest.Number, pullRequest.Title),
+		sessionToken: token,
+		repoURL:      target.WebURL(),
+		metadata:     extras.metadata,
+		refs:         extras.refs,
+		readme:       extras.readme,
+		releases:     extras.releases,
+		rateLimit:    client.Status(),
 	}, nil
 }
 
@@ -208,14 +310,31 @@ func performDownloadCmd(request downloadRequest) tea.Cmd {
 			return downloadFinishedMsg{err: err}
 		}
 
-		downloader, err := download.New(downloadDir, request.token)
+		downloader, err := download.New(downloadDir, request.token, download.Options{
+			ConflictStrategy: request.conflict,
+			OutputMode:       request.outputMode,
+		})
 		if err != nil {
 			return downloadFinishedMsg{err: err}
 		}
 
-		errors, err := downloader.DownloadItems(ctx, items, request.progress)
+		result, errors, err := downloader.DownloadItems(ctx, items, request.progress)
+		manifestPath := ""
+		if err == nil {
+			manifestPath, _ = download.WriteManifest(downloadDir, download.Manifest{
+				RepositoryURL:    request.repoURL,
+				Ref:              request.currentURL.Branch,
+				OutputMode:       request.outputMode,
+				ConflictStrategy: request.conflict,
+				OutputPath:       result.OutputPath,
+				SelectedPaths:    selectedPaths(items),
+			})
+		}
+
 		return downloadFinishedMsg{
 			downloadDir: downloadDir,
+			outputPath:  result.OutputPath,
+			manifest:    manifestPath,
 			errors:      errors,
 			err:         err,
 		}
@@ -247,4 +366,105 @@ func chooseDownloadDir(request downloadRequest) (string, error) {
 	}
 
 	return filepath.Join(baseDir, request.currentURL.Repo), nil
+}
+
+type repoExtras struct {
+	metadata gh.RepoMetadata
+	refs     []gh.RepoRef
+	readme   gh.Readme
+	releases []gh.Release
+}
+
+func loadRepositoryExtras(ctx context.Context, client *gh.Client, owner, repo, branch string) repoExtras {
+	var extras repoExtras
+
+	metadata, err := client.FetchRepoMetadata(ctx, owner, repo)
+	if err == nil {
+		extras.metadata = metadata
+		extras.refs, _ = client.FetchRefs(ctx, owner, repo, metadata.DefaultBranch)
+	} else {
+		extras.refs, _ = client.FetchRefs(ctx, owner, repo, branch)
+	}
+
+	readme, err := client.FetchREADME(ctx, owner, repo, branch)
+	if err == nil {
+		extras.readme = readme
+	}
+
+	releases, err := client.FetchReleases(ctx, owner, repo)
+	if err == nil {
+		extras.releases = releases
+	}
+
+	return extras
+}
+
+type repoSnapshot struct {
+	CurrentURL  gh.URL
+	FullTree    []gh.RepoItem
+	FolderSizes map[string]uint64
+	Metadata    gh.RepoMetadata
+	Refs        []gh.RepoRef
+	Readme      gh.Readme
+	Releases    []gh.Release
+}
+
+func loadCachedRepository(target gh.URL, cacheTTL time.Duration) (repoSnapshot, bool, error) {
+	key := repoCacheKey(target)
+	return cache.Load[repoSnapshot](key, cacheTTL)
+}
+
+func saveCachedRepository(result loadResult) error {
+	if !result.hasFullTree {
+		return nil
+	}
+
+	snapshot := repoSnapshot{
+		CurrentURL:  result.currentURL,
+		FullTree:    result.fullTree,
+		FolderSizes: result.folderSizes,
+		Metadata:    result.metadata,
+		Refs:        result.refs,
+		Readme:      result.readme,
+		Releases:    result.releases,
+	}
+	return cache.Save(repoCacheKey(result.currentURL), snapshot)
+}
+
+func snapshotToLoadResult(target gh.URL, snapshot repoSnapshot, token string) loadResult {
+	browsePath, cursorPath := resolveRequestedView(snapshot.FullTree, target.Path)
+	items := repoItemsForPath(snapshot.FullTree, browsePath)
+	cursor := 0
+	if cursorPath != "" {
+		cursor = findCursorByPath(items, cursorPath)
+	}
+
+	target.Path = browsePath
+	return loadResult{
+		currentURL:   target,
+		items:        items,
+		fullTree:     snapshot.FullTree,
+		hasFullTree:  true,
+		folderSizes:  snapshot.FolderSizes,
+		cursor:       cursor,
+		warning:      "Loaded repository tree from cache.",
+		sessionToken: token,
+		repoURL:      target.WebURL(),
+		metadata:     snapshot.Metadata,
+		refs:         snapshot.Refs,
+		readme:       snapshot.Readme,
+		releases:     snapshot.Releases,
+	}
+}
+
+func repoCacheKey(target gh.URL) string {
+	return fmt.Sprintf("repo_%s_%s_%s", target.Owner, target.Repo, target.Branch)
+}
+
+func selectedPaths(items []gh.RepoItem) []string {
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		paths = append(paths, item.Path)
+	}
+	return paths
 }

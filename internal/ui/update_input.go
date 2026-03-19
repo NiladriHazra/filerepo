@@ -42,7 +42,7 @@ func (m *model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = modeLoading
 		m.statusMessage = "Parsing URL..."
-		return m, loadRepoCmd(m.urlInput, m.sessionToken)
+		return m, loadRepoCmd(m.urlInput, m.sessionToken, m.configState.Cache.Enabled, m.configState.CacheTTL())
 	case "esc":
 		return m, tea.Quit
 	default:
@@ -82,7 +82,10 @@ func (m *model) handleSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			chosenPath = dir
 		}
 
-		items := m.selectedOrFocusedItems()
+		items := m.savePrompt.items
+		if len(items) == 0 {
+			items = m.selectedOrFocusedItems()
+		}
 		progress := &download.Progress{Total: len(items)}
 		m.downloadProgress = progress
 		m.downloading = true
@@ -90,6 +93,7 @@ func (m *model) handleSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		request := downloadRequest{
 			currentURL:   *m.currentURL,
+			repoURL:      m.currentRepoURL,
 			selected:     items,
 			fullTree:     m.fullTree,
 			hasFullTree:  m.hasFullTree,
@@ -98,9 +102,25 @@ func (m *model) handleSavePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			overridePath: chosenPath,
 			cwd:          m.cwd,
 			noFolder:     m.noFolder,
+			conflict:     m.savePrompt.conflict,
+			outputMode:   m.savePrompt.output,
 			progress:     progress,
 		}
 		return m, performDownloadCmd(request)
+	case "s":
+		m.savePrompt.conflict = download.ConflictSkip
+	case "o":
+		m.savePrompt.conflict = download.ConflictOverwrite
+	case "r":
+		m.savePrompt.conflict = download.ConflictRename
+	case "e":
+		m.savePrompt.conflict = download.ConflictResume
+	case "f":
+		m.savePrompt.output = download.OutputFiles
+	case "z":
+		m.savePrompt.output = download.OutputZip
+	case "t":
+		m.savePrompt.output = download.OutputTarGz
 	case "ctrl+w", "ctrl+u":
 		m.savePrompt.input = ""
 		m.savePrompt.cursor = 0

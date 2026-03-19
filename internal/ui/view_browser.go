@@ -35,6 +35,11 @@ func (m *model) renderBrowser() string {
 		shortcutLabel("a/u", "all/none"),
 		shortcutLabel("d", "download"),
 		shortcutLabel("/", "search"),
+		shortcutLabel("b/t", "refs"),
+		shortcutLabel("R", "releases"),
+		shortcutLabel("m", "repo"),
+		shortcutLabel("y/Y/P", "copy"),
+		shortcutLabel("f", "favorite"),
 	))
 
 	return strings.Join(sections, "\n\n")
@@ -43,9 +48,16 @@ func (m *model) renderBrowser() string {
 func (m *model) renderRepositoryHeader(panelWidth int) string {
 	info := ""
 	if m.currentURL != nil {
-		info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /"
-		if m.currentURL.Path != "" {
-			info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /" + m.currentURL.Path
+		switch m.currentURL.Kind {
+		case gh.TargetCompare:
+			info = fmt.Sprintf("%s/%s  compare %s...%s", m.currentURL.Owner, m.currentURL.Repo, m.currentURL.CompareBase, m.currentURL.CompareHead)
+		case gh.TargetPullRequest:
+			info = fmt.Sprintf("%s/%s  pull #%d @ %s", m.currentURL.Owner, m.currentURL.Repo, m.currentURL.PullNumber, m.currentURL.Branch)
+		default:
+			info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /"
+			if m.currentURL.Path != "" {
+				info = m.currentURL.Owner + "/" + m.currentURL.Repo + " @ " + m.currentURL.Branch + "  /" + m.currentURL.Path
+			}
 		}
 	}
 
@@ -54,8 +66,17 @@ func (m *model) renderRepositoryHeader(panelWidth int) string {
 		selected = baseTextStyle.Render("  ") + successText.Render(fmt.Sprintf("[%d selected]", count))
 	}
 
+	favorite := ""
+	if m.isFavoriteRepo() {
+		favorite = baseTextStyle.Render("  ") + successText.Render("[favorite]")
+	}
+	status := ""
+	if auth := m.authStatusLabel(); auth != "" {
+		status = baseTextStyle.Render("  ") + mutedTextStyle.Render("["+auth+"]")
+	}
+
 	title := accentTextStyle.Render(" Repository ")
-	content := headerTextStyle.Render(info) + selected
+	content := headerTextStyle.Render(info) + favorite + selected + status
 
 	return titledPanelWithColor(title, content, panelWidth, colorAccent)
 }

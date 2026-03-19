@@ -3,6 +3,7 @@ package ui
 import (
 	"time"
 
+	"github.com/NiladriHazra/filerepo/internal/config"
 	"github.com/NiladriHazra/filerepo/internal/download"
 	gh "github.com/NiladriHazra/filerepo/internal/github"
 )
@@ -39,21 +40,49 @@ type toast struct {
 }
 
 type previewState struct {
-	path    string
-	content string
-	scroll  int
-	status  previewStatus
+	path        string
+	content     string
+	scroll      int
+	status      previewStatus
+	wrap        bool
+	showNumbers bool
 }
 
 type savePrompt struct {
 	input     string
 	cursor    int
 	itemCount int
+	conflict  download.ConflictStrategy
+	output    download.OutputMode
+	items     []gh.RepoItem
 }
 
 type navState struct {
 	url    gh.URL
 	cursor int
+}
+
+type refPickerState struct {
+	kind   string
+	query  string
+	cursor int
+}
+
+type releasePickerState struct {
+	cursor int
+}
+
+type infoOverlayState struct {
+	tab    int
+	scroll int
+}
+
+// RunOptions controls UI startup behavior.
+type RunOptions struct {
+	Token         string
+	ActiveProfile string
+	CWD           bool
+	NoFolder      bool
 }
 
 type model struct {
@@ -68,6 +97,8 @@ type model struct {
 
 	client                 *gh.Client
 	sessionToken           string
+	activeProfile          string
+	configState            config.Config
 	configuredDownloadPath string
 	cwd                    bool
 	noFolder               bool
@@ -89,10 +120,20 @@ type model struct {
 	asciiMode    bool
 
 	preview            *previewState
+	refPicker          *refPickerState
+	releasePicker      *releasePickerState
+	infoOverlay        *infoOverlayState
 	savePrompt         *savePrompt
 	downloadPathChoice string
 	downloading        bool
 	downloadProgress   *download.Progress
+
+	repoMetadata   gh.RepoMetadata
+	repoRefs       []gh.RepoRef
+	repoReadme     gh.Readme
+	repoReleases   []gh.Release
+	rateLimit      gh.RateLimitStatus
+	currentRepoURL string
 
 	toast *toast
 }

@@ -25,13 +25,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = gh.NewClient(typed.sessionToken)
 		m.sessionToken = typed.sessionToken
 		m.currentURL = &typed.currentURL
+		m.currentRepoURL = typed.repoURL
 		m.items = typed.items
 		m.fullTree = typed.fullTree
 		m.hasFullTree = typed.hasFullTree
 		m.folderSizes = typed.folderSizes
+		m.repoMetadata = typed.metadata
+		m.repoRefs = typed.refs
+		m.repoReadme = typed.readme
+		m.repoReleases = typed.releases
+		m.rateLimit = typed.rateLimit
 		m.mode = modeBrowse
 		m.statusMessage = ""
 		m.resetBrowserPosition(typed.cursor)
+		m.recordRecentRepo(typed.repoURL)
 		switch typed.warning {
 		case "":
 			m.showToast("Repository loaded.", toastSuccess)
@@ -68,7 +75,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case typed.empty:
 			m.showToast("No downloadable files found in the selection.", toastWarning)
 		case len(typed.errors) == 0:
-			m.showToast("Downloaded to: "+typed.downloadDir, toastSuccess)
+			if typed.manifest != "" {
+				m.showToast("Downloaded to: "+typed.outputPath+"  [manifest saved]", toastSuccess)
+			} else {
+				m.showToast("Downloaded to: "+typed.outputPath, toastSuccess)
+			}
 		default:
 			m.showToast(fmt.Sprintf("Download finished with %d errors", len(typed.errors)), toastWarning)
 		}

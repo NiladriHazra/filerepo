@@ -17,6 +17,12 @@ type repoLoadedMsg struct {
 	cursor       int
 	warning      string
 	sessionToken string
+	repoURL      string
+	metadata     gh.RepoMetadata
+	refs         []gh.RepoRef
+	readme       gh.Readme
+	releases     []gh.Release
+	rateLimit    gh.RateLimitStatus
 }
 
 type repoLoadFailedMsg struct {
@@ -35,6 +41,8 @@ type previewFailedMsg struct {
 
 type downloadFinishedMsg struct {
 	downloadDir string
+	outputPath  string
+	manifest    string
 	errors      []string
 	empty       bool
 	err         error
