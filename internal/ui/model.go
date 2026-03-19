@@ -1,9 +1,9 @@
 package ui
 
 import (
-	"strings"
 	"time"
 
+	"github.com/NiladriHazra/filerepo/internal/config"
 	gh "github.com/NiladriHazra/filerepo/internal/github"
 )
 
@@ -22,7 +22,7 @@ const (
 	defaultListHeight = 10
 )
 
-func newModel(initialURL, token, downloadPath string, cwd, noFolder bool) *model {
+func newModel(initialURL string, cfg config.Config, options RunOptions) *model {
 	input := initialURL
 	if input == "" {
 		input = gh.GetLocalGitRemote()
@@ -34,11 +34,13 @@ func newModel(initialURL, token, downloadPath string, cwd, noFolder bool) *model
 		mode:                   modeInput,
 		urlInput:               input,
 		urlCursor:              len(input),
-		client:                 gh.NewClient(token),
-		sessionToken:           token,
-		configuredDownloadPath: downloadPath,
-		cwd:                    cwd,
-		noFolder:               noFolder,
+		client:                 gh.NewClient(options.Token),
+		sessionToken:           options.Token,
+		activeProfile:          options.ActiveProfile,
+		configState:            cfg,
+		configuredDownloadPath: cfg.DownloadPath,
+		cwd:                    options.CWD,
+		noFolder:               options.NoFolder,
 		folderSizes:            map[string]uint64{},
 		selectedPath:           map[string]struct{}{},
 	}
@@ -135,9 +137,9 @@ func (m *model) viewItems() []gh.RepoItem {
 			source = m.fullTree
 		}
 
-		query := strings.ToLower(m.searchQuery)
+		options := parseSearchQuery(m.searchQuery)
 		items = filterItems(source, func(item gh.RepoItem) bool {
-			return strings.Contains(strings.ToLower(item.Path), query)
+			return matchesSearch(item, options)
 		})
 		sortItemsByPath(items)
 	} else {

@@ -9,10 +9,14 @@ import (
 
 // URL describes a GitHub repository URL and the selected tree path.
 type URL struct {
-	Owner  string
-	Repo   string
-	Branch string
-	Path   string
+	Owner       string
+	Repo        string
+	Branch      string
+	Path        string
+	Kind        TargetKind
+	CompareBase string
+	CompareHead string
+	PullNumber  int
 }
 
 // ParseURL parses a github.com repository, tree, or blob URL.
@@ -35,16 +39,49 @@ func ParseURL(raw string) (URL, error) {
 		Owner:  segments[0],
 		Repo:   segments[1],
 		Branch: "main",
+		Kind:   TargetRepository,
 	}
 
-	if len(segments) >= 4 {
-		switch segments[2] {
-		case "tree", "blob":
-			result.Branch = segments[3]
-			if len(segments) > 4 {
-				result.Path = strings.Join(segments[4:], "/")
-			}
+	if len(segments) < 3 {
+		return result, nil
+	}
+
+	switch segments[2] {
+	case "tree", "blob":
+		if len(segments) < 4 {
+			return URL{}, fmt.Errorf("missing ref name in GitHub URL")
 		}
+		result.Branch = segments[3]
+		if len(segments) > 4 {
+			result.Path = strings.Join(segments[4:], "/")
+		}
+	case "commit":
+		if len(segments) < 4 {
+			return URL{}, fmt.Errorf("missing commit SHA in GitHub URL")
+		}
+		result.Branch = segments[3]
+	case "compare":
+		if len(segments) < 4 {
+			return URL{}, fmt.Errorf("missing compare refs in GitHub URL")
+		}
+		base, head, ok := strings.Cut(segments[3], "...")
+		if !ok || base == "" || head == "" {
+			return URL{}, fmt.Errorf("invalid compare URL")
+		}
+		result.Kind = TargetCompare
+		result.CompareBase = base
+		result.CompareHead = head
+		result.Branch = head
+	case "pull":
+		if len(segments) < 4 {
+			return URL{}, fmt.Errorf("missing pull request number in GitHub URL")
+		}
+		number := 0
+		if _, err := fmt.Sscanf(segments[3], "%d", &number); err != nil || number <= 0 {
+			return URL{}, fmt.Errorf("invalid pull request number")
+		}
+		result.Kind = TargetPullRequest
+		result.PullNumber = number
 	}
 
 	return result, nil
@@ -57,6 +94,29 @@ func (u URL) APIURL() string {
 		return fmt.Sprintf("%s?ref=%s", base, url.QueryEscape(u.Branch))
 	}
 	return fmt.Sprintf("%s/%s?ref=%s", base, u.Path, url.QueryEscape(u.Branch))
+}
+
+// RepoURL returns the canonical repository URL.
+func (u URL) RepoURL() string {
+	return fmt.Sprintf("https://github.com/%s/%s", u.Owner, u.Repo)
+}
+
+// WebURL returns the canonical GitHub URL for the target.
+func (u URL) WebURL() string {
+	switch u.Kind {
+	case TargetCompare:
+		return fmt.Sprintf("%s/compare/%s...%s", u.RepoURL(), u.CompareBase, u.CompareHead)
+	case TargetPullRequest:
+		return fmt.Sprintf("%s/pull/%d", u.RepoURL(), u.PullNumber)
+	default:
+		if u.Path == "" && u.Branch == "main" {
+			return u.RepoURL()
+		}
+		if u.Path == "" {
+			return fmt.Sprintf("%s/tree/%s", u.RepoURL(), u.Branch)
+		}
+		return fmt.Sprintf("%s/tree/%s/%s", u.RepoURL(), u.Branch, u.Path)
+	}
 }
 
 // GetLocalGitRemote resolves the current git origin into an https GitHub URL.

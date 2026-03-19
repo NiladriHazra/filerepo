@@ -7,11 +7,14 @@ type RepoItem struct {
 	Path           string  `json:"path"`
 	DownloadURL    string  `json:"download_url"`
 	URL            string  `json:"url"`
+	HTMLURL        string  `json:"html_url,omitempty"`
 	Size           *uint64 `json:"size"`
 	Selected       bool    `json:"-"`
 	LFSOID         string  `json:"-"`
 	LFSSize        *uint64 `json:"-"`
 	LFSDownloadURL string  `json:"-"`
+	Status         string  `json:"-"`
+	TargetKind     string  `json:"-"`
 }
 
 // IsDir reports whether the item is a directory.

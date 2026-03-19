@@ -3,11 +3,15 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +19,8 @@ import (
 type Client struct {
 	httpClient *http.Client
 	token      string
+	statusMu   sync.RWMutex
+	status     RateLimitStatus
 }
 
 // NewClient constructs a GitHub API client.
@@ -22,6 +28,9 @@ func NewClient(token string) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 45 * time.Second},
 		token:      token,
+		status: RateLimitStatus{
+			Authenticated: token != "",
+		},
 	}
 }
 
@@ -49,6 +58,7 @@ func (c *Client) Request(ctx context.Context, method, target string, body any) (
 	if err != nil {
 		return nil, &APIError{Kind: ErrorAPI, Message: err.Error()}
 	}
+	c.captureRateLimit(resp)
 
 	if apiErr := classifyResponse(resp, c.token != ""); apiErr != nil {
 		return nil, apiErr
@@ -122,6 +132,21 @@ func (c *Client) FetchRawContent(ctx context.Context, target string) (string, er
 	return string(data), nil
 }
 
+// FetchJSON decodes a JSON payload into the provided target.
+func (c *Client) FetchJSON(ctx context.Context, target string, value any) error {
+	resp, err := c.Request(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(value); err != nil {
+		return fmt.Errorf("parse GitHub JSON response: %w", err)
+	}
+
+	return nil
+}
+
 // DownloadBinary downloads raw bytes from a GitHub endpoint.
 func (c *Client) DownloadBinary(ctx context.Context, target string) ([]byte, error) {
 	resp, err := c.Request(ctx, http.MethodGet, target, nil)
@@ -165,6 +190,23 @@ func (c *Client) GetLFSDownloadURL(ctx context.Context, owner, repo, oid string,
 	}
 
 	return batch.Objects[0].Actions.Download.Href, nil
+}
+
+// DecodeBase64Content decodes a GitHub API base64 content field.
+func DecodeBase64Content(encoded string) (string, error) {
+	encoded = strings.ReplaceAll(encoded, "\n", "")
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("decode base64 content: %w", err)
+	}
+	return string(data), nil
+}
+
+// Status returns the most recently observed rate-limit/auth status.
+func (c *Client) Status() RateLimitStatus {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.status
 }
 
 func encodeBody(body any) (io.Reader, error) {
@@ -217,4 +259,27 @@ func classifyResponse(resp *http.Response, hasToken bool) error {
 	}
 
 	return nil
+}
+
+func (c *Client) captureRateLimit(resp *http.Response) {
+	status := RateLimitStatus{
+		Authenticated: c.token != "",
+	}
+
+	if value, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Limit")); err == nil {
+		status.Limit = value
+	}
+	if value, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining")); err == nil {
+		status.Remaining = value
+	}
+	if value, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Used")); err == nil {
+		status.Used = value
+	}
+	if unixValue, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil && unixValue > 0 {
+		status.ResetAt = time.Unix(unixValue, 0).UTC()
+	}
+
+	c.statusMu.Lock()
+	c.status = status
+	c.statusMu.Unlock()
 }

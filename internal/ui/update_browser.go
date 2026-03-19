@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 
+	"github.com/NiladriHazra/filerepo/internal/download"
+	gh "github.com/NiladriHazra/filerepo/internal/github"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -12,6 +14,12 @@ func (m *model) handleBrowseMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSavePrompt(msg)
 	case m.preview != nil:
 		return m.handlePreview(msg)
+	case m.refPicker != nil:
+		return m.handleRefPicker(msg)
+	case m.releasePicker != nil:
+		return m.handleReleasePicker(msg)
+	case m.infoOverlay != nil:
+		return m.handleInfoOverlay(msg)
 	case m.searching:
 		return m.handleSearch(msg)
 	default:
@@ -23,6 +31,10 @@ func (m *model) handlePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "enter", "q":
 		m.preview = nil
+	case "w":
+		m.preview.wrap = !m.preview.wrap
+	case "n":
+		m.preview.showNumbers = !m.preview.showNumbers
 	case "up", "k":
 		if m.preview.scroll > 0 {
 			m.preview.scroll--
@@ -35,6 +47,123 @@ func (m *model) handlePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.preview.scroll += defaultPageStep
 	case "home", "g":
 		m.preview.scroll = 0
+	}
+
+	return m, nil
+}
+
+func (m *model) handleRefPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.refPicker = nil
+	case "enter":
+		refs := m.filteredRefs()
+		if len(refs) == 0 || m.currentURL == nil {
+			return m, nil
+		}
+
+		selected := refs[min(m.refPicker.cursor, len(refs)-1)]
+		m.refPicker = nil
+		m.navigation = nil
+		m.selectedPath = map[string]struct{}{}
+		target := *m.currentURL
+		target.Branch = selected.Name
+		target.Path = ""
+		m.urlInput = target.WebURL()
+		m.mode = modeLoading
+		m.statusMessage = fmt.Sprintf("Switching to %s...", selected.Name)
+		return m, loadRepoCmd(m.urlInput, m.sessionToken, m.configState.Cache.Enabled, m.configState.CacheTTL())
+	case "up", "k":
+		if m.refPicker.cursor > 0 {
+			m.refPicker.cursor--
+		}
+	case "down", "j":
+		if refs := m.filteredRefs(); m.refPicker.cursor < len(refs)-1 {
+			m.refPicker.cursor++
+		}
+	case "backspace":
+		if len(m.refPicker.query) > 0 {
+			m.refPicker.query = m.refPicker.query[:len(m.refPicker.query)-1]
+			m.refPicker.cursor = 0
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.refPicker.query += string(msg.Runes)
+			m.refPicker.cursor = 0
+		}
+	}
+
+	return m, nil
+}
+
+func (m *model) handleInfoOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.infoOverlay = nil
+	case "tab", "right", "l":
+		m.infoOverlay.tab = (m.infoOverlay.tab + 1) % 3
+		m.infoOverlay.scroll = 0
+	case "shift+tab", "left", "h":
+		m.infoOverlay.tab = (m.infoOverlay.tab + 2) % 3
+		m.infoOverlay.scroll = 0
+	case "up", "k":
+		if m.infoOverlay.scroll > 0 {
+			m.infoOverlay.scroll--
+		}
+	case "down", "j":
+		m.infoOverlay.scroll++
+	case "home", "g":
+		m.infoOverlay.scroll = 0
+	case "pgup":
+		m.infoOverlay.scroll = max(m.infoOverlay.scroll-defaultPageStep, 0)
+	case "pgdown":
+		m.infoOverlay.scroll += defaultPageStep
+	}
+
+	return m, nil
+}
+
+func (m *model) handleReleasePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	assets := m.releaseItems()
+	switch msg.String() {
+	case "esc", "q":
+		m.releasePicker = nil
+	case "up", "k":
+		if m.releasePicker.cursor > 0 {
+			m.releasePicker.cursor--
+		}
+	case "down", "j":
+		if m.releasePicker.cursor < len(assets)-1 {
+			m.releasePicker.cursor++
+		}
+	case "enter", "d":
+		if len(assets) == 0 {
+			return m, nil
+		}
+		defaultPath, err := defaultDownloadDir()
+		if err != nil {
+			m.showToast(err.Error(), toastError)
+			return m, nil
+		}
+		asset := assets[m.releasePicker.cursor]
+		m.releasePicker = nil
+		m.savePrompt = &savePrompt{
+			input:     defaultPath,
+			cursor:    len(defaultPath),
+			itemCount: 1,
+			conflict:  download.ConflictSkip,
+			output:    download.OutputFiles,
+			items:     []gh.RepoItem{asset},
+		}
+	case "y":
+		if len(assets) == 0 {
+			return m, nil
+		}
+		if err := copyText(assets[m.releasePicker.cursor].DownloadURL); err != nil {
+			m.showToast(err.Error(), toastError)
+		} else {
+			m.showToast("Copied release asset URL.", toastSuccess)
+		}
 	}
 
 	return m, nil
@@ -103,6 +232,43 @@ func (m *model) handleBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searching = true
 		m.searchQuery = ""
 		m.resetBrowserPosition(0)
+	case "b":
+		m.openRefPicker("branch")
+	case "t":
+		m.openRefPicker("tag")
+	case "m":
+		m.infoOverlay = &infoOverlayState{}
+	case "R":
+		if len(m.releaseItems()) == 0 {
+			m.showToast("No release assets available.", toastWarning)
+		} else {
+			m.releasePicker = &releasePickerState{}
+		}
+	case "f":
+		switch m.toggleFavorite(m.currentRepoURL) {
+		case true:
+			m.showToast("Repository added to favorites.", toastSuccess)
+		default:
+			m.showToast("Repository removed from favorites.", toastInfo)
+		}
+	case "y":
+		if err := copyText(m.currentItemWebURL()); err != nil {
+			m.showToast(err.Error(), toastError)
+		} else {
+			m.showToast("Copied GitHub URL.", toastSuccess)
+		}
+	case "Y":
+		if err := copyText(m.currentItemRawURL()); err != nil {
+			m.showToast(err.Error(), toastError)
+		} else {
+			m.showToast("Copied raw URL.", toastSuccess)
+		}
+	case "P":
+		if err := copyText(m.plannedOutputPath()); err != nil {
+			m.showToast(err.Error(), toastError)
+		} else {
+			m.showToast("Copied planned output path.", toastSuccess)
+		}
 	case "backspace", "left", "h":
 		return m.navigateBack()
 	case "enter", "right", "l":
@@ -124,6 +290,9 @@ func (m *model) handleBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			input:     defaultPath,
 			cursor:    len(defaultPath),
 			itemCount: len(items),
+			conflict:  download.ConflictSkip,
+			output:    download.OutputFiles,
+			items:     items,
 		}
 	}
 
@@ -150,7 +319,7 @@ func (m *model) navigateBack() (tea.Model, tea.Cmd) {
 	m.mode = modeLoading
 	m.statusMessage = "Loading directory..."
 	m.urlInput = fmt.Sprintf("https://github.com/%s/%s/tree/%s/%s", last.url.Owner, last.url.Repo, last.url.Branch, last.url.Path)
-	return m, loadRepoCmd(m.urlInput, m.sessionToken)
+	return m, loadRepoCmd(m.urlInput, m.sessionToken, m.configState.Cache.Enabled, m.configState.CacheTTL())
 }
 
 func (m *model) openCurrentItem() (tea.Model, tea.Cmd) {
@@ -162,8 +331,9 @@ func (m *model) openCurrentItem() (tea.Model, tea.Cmd) {
 	item := items[m.cursor]
 	if item.IsFile() {
 		m.preview = &previewState{
-			path:   item.Path,
-			status: previewLoading,
+			path:        item.Path,
+			status:      previewLoading,
+			showNumbers: true,
 		}
 		return m, fetchPreviewCmd(item, m.sessionToken)
 	}
@@ -184,5 +354,5 @@ func (m *model) openCurrentItem() (tea.Model, tea.Cmd) {
 	m.urlInput = target
 	m.mode = modeLoading
 	m.statusMessage = "Loading directory..."
-	return m, loadRepoCmd(target, m.sessionToken)
+	return m, loadRepoCmd(target, m.sessionToken, m.configState.Cache.Enabled, m.configState.CacheTTL())
 }
